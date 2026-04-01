@@ -8,6 +8,8 @@ type BtwPanelState = "running" | "complete" | "aborted" | "error";
 interface BtwPanelComponentOptions {
 	question: string;
 	tui: TUI;
+	historyCount?: number;
+	modelLabel?: string;
 }
 
 export class BtwPanelComponent extends Container {
@@ -17,11 +19,15 @@ export class BtwPanelComponent extends Container {
 	#answer = "";
 	#errorMessage: string | undefined;
 	#closed = false;
+	#historyCount: number;
+	#modelLabel: string | undefined;
 
 	constructor(options: BtwPanelComponentOptions) {
 		super();
 		this.#question = options.question;
 		this.#tui = options.tui;
+		this.#historyCount = options.historyCount ?? 0;
+		this.#modelLabel = options.modelLabel;
 		this.#rebuild();
 	}
 
@@ -37,10 +43,13 @@ export class BtwPanelComponent extends Container {
 		this.#rebuild();
 	}
 
-	markComplete(): void {
+	markComplete(historyCount?: number): void {
 		if (this.#closed) return;
 		this.#state = "complete";
 		this.#errorMessage = undefined;
+		if (historyCount !== undefined) {
+			this.#historyCount = historyCount;
+		}
 		this.#rebuild();
 	}
 
@@ -66,7 +75,7 @@ export class BtwPanelComponent extends Container {
 		this.clear();
 		this.addChild(new DynamicBorder(str => theme.fg("dim", str)));
 		this.addChild(new Spacer(1));
-		this.addChild(new Text(theme.fg("accent", replaceTabs(this.#question)), 1, 0));
+		this.addChild(new Text(this.#headerLine(), 1, 0));
 		this.addChild(new Spacer(1));
 		this.addChild(this.#contentComponent());
 		this.addChild(new Spacer(1));
@@ -76,11 +85,24 @@ export class BtwPanelComponent extends Container {
 		this.#tui.requestRender();
 	}
 
+	#headerLine(): string {
+		const q = theme.fg("accent", replaceTabs(this.#question));
+		if (this.#modelLabel) {
+			return `${q} ${theme.fg("dim", `[${this.#modelLabel}]`)}`;
+		}
+		return q;
+	}
+
 	#footerLine(): string {
+		const historyHint =
+			this.#historyCount > 0 ? `${this.#historyCount} prior exchange${this.#historyCount === 1 ? "" : "s"} · ` : "";
 		switch (this.#state) {
 			case "running":
-				return theme.fg("muted", "Esc cancel /btw");
+				return theme.fg("muted", `${historyHint}Esc cancel /btw`);
 			case "complete":
+				if (this.#historyCount > 0) {
+					return theme.fg("muted", `${historyHint}/btw:handoff to inject · Esc dismiss`);
+				}
 				return theme.fg("muted", "Esc dismiss");
 			case "aborted":
 				return theme.fg("warning", `${theme.status.warning} Cancelled · Esc dismiss`);

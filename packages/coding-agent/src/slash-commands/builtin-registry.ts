@@ -504,6 +504,14 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<BuiltinSlashCommandSpec> = [
 		},
 	},
 	{
+		name: "btw:handoff",
+		description: "Inject brainstorm history into main session",
+		handle: async (_command, runtime) => {
+			runtime.ctx.editor.setText("");
+			await runtime.ctx.handleBtwHandoff();
+		},
+	},
+	{
 		name: "background",
 		aliases: ["bg"],
 		description: "Detach UI and continue running in background",

@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
-import { type AssistantMessage, type Context, streamSimple } from "@oh-my-pi/pi-ai";
+import { type AssistantMessage, type Context, type Model, streamSimple } from "@oh-my-pi/pi-ai";
 import { renderPromptTemplate } from "../../config/prompt-templates";
+import btwHandoffPrompt from "../../prompts/system/btw-handoff.md" with { type: "text" };
 import btwUserPrompt from "../../prompts/system/btw-user.md" with { type: "text" };
 import { toReasoningEffort } from "../../thinking";
 import { BtwPanelComponent } from "../components/btw-panel";
@@ -12,8 +13,14 @@ interface BtwRequest {
 	question: string;
 }
 
+export interface BtwHistoryEntry {
+	question: string;
+	answer: string;
+}
+
 export class BtwController {
 	#activeRequest: BtwRequest | undefined;
+	#history: BtwHistoryEntry[] = [];
 	readonly #streamFn: typeof streamSimple;
 
 	constructor(
@@ -21,6 +28,10 @@ export class BtwController {
 		options?: { streamFn?: typeof streamSimple },
 	) {
 		this.#streamFn = options?.streamFn ?? streamSimple;
+	}
+
+	get historyCount(): number {
+		return this.#history.length;
 	}
 
 	hasActiveRequest(): boolean {
@@ -35,6 +46,7 @@ export class BtwController {
 
 	dispose(): void {
 		this.#closeActiveRequest({ abort: true });
+		this.#history = [];
 	}
 
 	async start(question: string): Promise<void> {
@@ -44,7 +56,8 @@ export class BtwController {
 			return;
 		}
 
-		const model = this.ctx.session.model;
+		const roleModel = this.ctx.session.resolveRoleModel("btw");
+		const model = roleModel ?? this.ctx.session.model;
 		if (!model) {
 			this.ctx.showError("No active model available for /btw.");
 			return;
@@ -52,8 +65,15 @@ export class BtwController {
 
 		this.#closeActiveRequest({ abort: true });
 
+		const modelLabel = roleModel ? this.#formatModelLabel(roleModel) : undefined;
+
 		const request: BtwRequest = {
-			component: new BtwPanelComponent({ question: trimmedQuestion, tui: this.ctx.ui }),
+			component: new BtwPanelComponent({
+				question: trimmedQuestion,
+				tui: this.ctx.ui,
+				historyCount: this.#history.length,
+				modelLabel,
+			}),
 			abortController: new AbortController(),
 			question: trimmedQuestion,
 		};
@@ -62,6 +82,27 @@ export class BtwController {
 		this.ctx.ui.requestRender();
 		this.#activeRequest = request;
 		void this.#runRequest(request, model);
+	}
+
+	async handoff(): Promise<void> {
+		if (this.#history.length === 0) {
+			this.ctx.showStatus("No brainstorm history to hand off.");
+			return;
+		}
+
+		const content = renderPromptTemplate(btwHandoffPrompt, { exchanges: this.#history });
+		await this.ctx.session.sendCustomMessage(
+			{
+				customType: "btw-handoff",
+				content,
+				display: false,
+			},
+			{ deliverAs: "nextTurn", triggerTurn: false },
+		);
+
+		const count = this.#history.length;
+		this.#history = [];
+		this.ctx.showStatus(`Handed off ${count} brainstorm exchange${count === 1 ? "" : "s"} to session.`);
 	}
 
 	async #runRequest(
@@ -74,10 +115,12 @@ export class BtwController {
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 
-			const llmMessages = await this.ctx.session.convertMessagesToLlm(
-				[...this.#buildMessageSnapshot(), this.#buildQuestionMessage(request.question)],
-				request.abortController.signal,
-			);
+			const messages: AgentMessage[] = [
+				...this.#buildMessageSnapshot(),
+				...this.#buildHistoryMessages(),
+				this.#buildQuestionMessage(request.question),
+			];
+			const llmMessages = await this.ctx.session.convertMessagesToLlm(messages, request.abortController.signal);
 			const context: Context = {
 				systemPrompt: this.ctx.session.systemPrompt,
 				messages: llmMessages,
@@ -104,8 +147,9 @@ export class BtwController {
 					const finalText = this.#assistantText(event.message);
 					if (finalText) {
 						request.component.setAnswer(finalText);
+						this.#history.push({ question: request.question, answer: finalText });
 					}
-					request.component.markComplete();
+					request.component.markComplete(this.#history.length);
 					return;
 				}
 				if (event.type === "error") {
@@ -145,6 +189,26 @@ export class BtwController {
 		};
 	}
 
+	#buildHistoryMessages(): AgentMessage[] {
+		const messages: AgentMessage[] = [];
+		const now = Date.now();
+		for (const entry of this.#history) {
+			messages.push({
+				role: "user",
+				content: [
+					{
+						type: "text",
+						text: renderPromptTemplate(btwUserPrompt, { question: entry.question }),
+					},
+				],
+				attribution: "user",
+				timestamp: now,
+			});
+			messages.push(this.#syntheticAssistantMessage(entry.answer, now));
+		}
+		return messages;
+	}
+
 	#buildMessageSnapshot(): AgentMessage[] {
 		const messages = this.ctx.session.messages.slice();
 		if (!this.ctx.session.isStreaming || !this.ctx.streamingMessage) {
@@ -173,6 +237,31 @@ export class BtwController {
 			}
 		}
 		return text.trim();
+	}
+
+	/** Minimal AssistantMessage for history replay — metadata is zeroed since it's never persisted. */
+	#syntheticAssistantMessage(text: string, timestamp: number): AssistantMessage {
+		return {
+			role: "assistant",
+			content: [{ type: "text", text }],
+			api: "anthropic-messages",
+			provider: "synthetic",
+			model: "btw-history",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp,
+		};
+	}
+
+	#formatModelLabel(model: Model): string {
+		return model.name ?? model.id;
 	}
 
 	#closeActiveRequest(options: { abort: boolean }): void {

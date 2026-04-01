@@ -1313,6 +1313,10 @@ export class InteractiveMode implements InteractiveModeContext {
 		return this.#btwController.handleEscape();
 	}
 
+	handleBtwHandoff(): Promise<void> {
+		return this.#btwController.handoff();
+	}
+
 	cycleThinkingLevel(): void {
 		this.#inputController.cycleThinkingLevel();
 	}

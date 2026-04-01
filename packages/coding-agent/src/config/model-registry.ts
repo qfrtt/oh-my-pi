@@ -39,7 +39,7 @@ export function isAuthenticated(apiKey: string | undefined | null): apiKey is st
 	return Boolean(apiKey) && apiKey !== kNoAuth;
 }
 
-export type ModelRole = "default" | "smol" | "slow" | "vision" | "plan" | "commit" | "task";
+export type ModelRole = "default" | "smol" | "slow" | "vision" | "plan" | "commit" | "task" | "btw";
 
 export interface ModelRoleInfo {
 	tag?: string;
@@ -55,9 +55,10 @@ export const MODEL_ROLES: Record<ModelRole, ModelRoleInfo> = {
 	plan: { tag: "PLAN", name: "Architect", color: "muted" },
 	commit: { tag: "COMMIT", name: "Commit", color: "dim" },
 	task: { tag: "TASK", name: "Subtask", color: "muted" },
+	btw: { tag: "BTW", name: "Brainstorm", color: "accent" },
 };
 
-export const MODEL_ROLE_IDS: ModelRole[] = ["default", "smol", "slow", "vision", "plan", "commit", "task"];
+export const MODEL_ROLE_IDS: ModelRole[] = ["default", "smol", "slow", "vision", "plan", "commit", "task", "btw"];
 
 /** Alias for ModelRoleInfo - used for both built-in and custom roles */
 export type RoleInfo = ModelRoleInfo;
