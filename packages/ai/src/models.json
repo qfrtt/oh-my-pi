@@ -4605,7 +4605,7 @@
 				"cacheRead": 0,
 				"cacheWrite": 0
 			},
-			"contextWindow": 144000,
+			"contextWindow": 1000000,
 			"maxTokens": 64000,
 			"headers": {
 				"User-Agent": "GitHubCopilotChat/0.35.0",
